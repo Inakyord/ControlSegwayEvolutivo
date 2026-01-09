@@ -1,0 +1,118 @@
+<?xml version="1.0"?>
+<robot name="segway_robot">
+
+  <!-- ============================================ -->
+  <!-- BODY (Chassis)                          -->
+  <!-- Dimensions: (X=20, Y=10, Z=40) cm            -->
+  <!-- This is now the root link of the robot.      -->
+  <!-- ============================================ -->
+  <link name="body">
+    <visual>
+      <geometry>
+        <mesh filename="bodySegway.obj"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0.5 0.5 1 1"/>
+      </material>
+      <origin xyz="0 0 -0.20" rpy="0 0 0"/>
+    </visual>
+    
+    <collision>
+      <geometry>
+        <box size="0.20 0.10 0.40"/>
+      </geometry>
+    </collision>
+    
+    <inertial>
+      <mass value="2.5"/>
+      <origin xyz="0 0 0.15" rpy="0 0 0"/>
+      <inertia ixx="0.03" ixy="0.0" ixz="0.0"
+               iyy="0.035" iyz="0.0" izz="0.02"/>
+    </inertial>
+  </link>
+
+  <!-- ============================================ -->
+  <!-- LEFT WHEEL                                   -->
+  <!-- Dimensions: (Radius=8, Width=4) cm           -->
+  <!-- ============================================ -->
+  <link name="wheel_left">
+    <visual>
+      <geometry>
+        <mesh filename="wheelSegway.obj"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.2 0.2 0.2 1"/>
+      </material>
+      <origin xyz="-1.20 0 -0.10" rpy="0 0 0"/>
+    </visual>
+    
+    <collision>
+      <geometry>
+        <cylinder radius="0.08" length="0.04"/>
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 1.5708 0"/>
+    </collision>
+    
+    <inertial>
+      <mass value="0.15"/>
+      <origin xyz="0 0 0" rpy="0 1.5708 0"/>
+      <inertia ixx="0.00048" ixy="0.0" ixz="0.0"
+               iyy="0.00026" iyz="0.0" izz="0.00026"/>
+    </inertial>
+  </link>
+
+  <!-- ============================================ -->
+  <!-- RIGHT WHEEL                                  -->
+  <!-- Dimensions: (Radius=8, Width=4) cm           -->
+  <!-- ============================================ -->
+  <link name="wheel_right">
+    <visual>
+      <geometry>
+        <mesh filename="wheelSegway.obj"/>
+      </geometry>
+      <material name="red">
+        <color rgba="0.8 0.2 0.2 1"/>
+      </material>
+      <origin xyz="-1.20 0 -0.10" rpy="0 0 0"/>
+    </visual>
+    
+    <collision>
+      <geometry>
+        <cylinder radius="0.08" length="0.04"/>
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 1.5708 0"/>
+    </collision>
+    
+    <inertial>
+      <mass value="0.15"/>
+      <origin xyz="0 0 0" rpy="0 1.5708 0"/>
+      <inertia ixx="0.00048" ixy="0.0" ixz="0.0"
+               iyy="0.00026" iyz="0.0" izz="0.00026"/>
+    </inertial>
+  </link>
+
+  <!-- ============================================ -->
+  <!-- LEFT WHEEL JOINT                             -->
+  <!-- ============================================ -->
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="body"/>
+    <child link="wheel_left"/>
+    <origin xyz="-0.16 0.0 -0.15" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <dynamics damping="0.1" friction="0.0"/>
+    <limit effort="2.5" velocity="12.0"/>
+  </joint>
+
+  <!-- ============================================ -->
+  <!-- RIGHT WHEEL JOINT                            -->
+  <!-- ============================================ -->
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="body"/>
+    <child link="wheel_right"/>
+    <origin xyz="0.16 0.0 -0.15" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <dynamics damping="0.1" friction="0.0"/>
+    <limit effort="2.5" velocity="12.0"/>
+  </joint>
+
+</robot>

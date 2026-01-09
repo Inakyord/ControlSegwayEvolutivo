@@ -1,0 +1,16 @@
+contourpy==1.3.2
+cycler==0.12.1
+fonttools==4.61.1
+kiwisolver==1.4.9
+matplotlib==3.10.8
+numpy @ file:///Users/runner/miniforge3/conda-bld/numpy_1747544633931/work/dist/numpy-2.2.6-cp310-cp310-macosx_11_0_arm64.whl#sha256=50a17562ef677de6531058e998e32487919c216e19ca4e1bdd86b0e1262251c1
+packaging==25.0
+pandas==2.3.3
+pillow==12.1.0
+pybullet @ file:///Users/runner/miniforge3/conda-bld/bullet_1761060387420/work
+pyparsing==3.3.1
+python-dateutil==2.9.0.post0
+pytz==2025.2
+scipy==1.15.3
+six==1.17.0
+tzdata==2025.3
