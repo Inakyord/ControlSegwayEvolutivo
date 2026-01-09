@@ -11,14 +11,17 @@ El proyecto implementa una estrategia de **Planificación de Ganancias (Gain Sch
   <img src="https://img.shields.io/badge/Licencia-MIT-green" alt="License">
 </p>
 
+
+
 ## 📋 Características Principales
 
 * **Simulación Física de Alta Fidelidad:** Modelo URDF con colisiones ajustadas y dinámicas de fricción realistas en PyBullet.
+* **Flujo de Trabajo Automatizado:** Los parámetros optimizados se guardan y cargan automáticamente mediante JSON, asegurando la consistencia entre el entrenamiento y las pruebas.
 * **Control Híbrido:**
     * **Secuencial:** Transiciones suaves (LERP) entre modos de Balanceo, Avance y Giro.
     * **Reactivo:** Sistema de recuperación basado en estado que detecta caídas inminentes ($\theta > 2.5^\circ$) y aplica torques correctivos agresivos.
 * **Optimización Evolutiva:** Sintonización automática de 13 parámetros de control (KPs, KDs, velocidades, umbrales) mediante un Algoritmo Genético con elitismo y torneo.
-* **Robustez:** El sistema es capaz de guardar el progreso del entrenamiento ante interrupciones inesperadas.
+* **Feedback Visual:** Visualización en tiempo real del estado del controlador (Modo, Recuperación) mediante texto sobre el robot en la simulación.
 
 ## 📂 Estructura del Repositorio
 
@@ -30,10 +33,12 @@ El proyecto implementa una estrategia de **Planificación de Ganancias (Gain Sch
 │   └── wheelSegway.obj     # Malla visual de las ruedas
 │
 ├── src/                    # Código fuente
-│   ├── evolucion.py        # Algoritmo Genético para entrenar los controladores
-│   └── control_manual.py   # Script para probar el mejor controlador con teclado
+│   ├── evolucion.py        # Algoritmo Genético (GENERA el JSON de parámetros)
+│   ├── control_manual.py   # Control por teclado (LEE el JSON)
+│   └── control_automatico.py # Test autónomo de comportamiento (LEE el JSON)
 │
 ├── resultados/             # Salida de datos generados por la evolución
+│   ├── mejores_parametros.json # Archivo crítico: Contiene los genes ganadores
 │   ├── historial_fitness.csv
 │   ├── historial_mejor_individuo.csv
 │   └── top_10_finales.csv
@@ -67,42 +72,61 @@ pip install -r requirements.txt
 
 ## 🚀 Uso y Ejecución
 
-### 1. Probar el Controlador (Simulación Visual)
+⚠️ **IMPORTANTE:** Antes de ejecutar cualquier control (manual o automático), debes ejecutar primero la evolución para generar el archivo de parámetros.
 
-Para ver al robot operar con las mejores ganancias obtenidas (ya pre-cargadas en el script):
+### 1. Entrenar el Algoritmo Evolutivo (Paso Obligatorio)
 
-```bash
-python src/control_manual.py
-
-```
-
-**Controles (Hacer clic en la ventana de PyBullet para enfocar):**
-
-* `W`: Avanzar (Modo Locomoción)
-* `A` / `D`: Girar Izquierda / Derecha
-* `S`: Detenerse / Balanceo Estático
-* `Q`: Salir
-
-### 2. Entrenar el Algoritmo Evolutivo
-
-Para iniciar el proceso de optimización desde cero y buscar nuevas ganancias:
+Inicia el proceso de optimización para encontrar las mejores ganancias PID y parámetros de comportamiento.
 
 ```bash
 python src/evolucion.py
 
 ```
 
-* **Interrupción Segura:** Puedes detener el entrenamiento en cualquier momento presionando `Ctrl + C` en la terminal. El script finalizará la generación actual y guardará todos los resultados obtenidos hasta ese punto antes de cerrarse.
+* **Salida:** Al finalizar (o al interrumpir con `Ctrl + C`), se generará el archivo `resultados/mejores_parametros.json`.
+* **Robustez:** El script guarda el progreso automáticamente si se interrumpe manualmente.
+
+### 2. Control Manual (Teclado)
+
+Una vez entrenado, puedes controlar al robot utilizando los parámetros optimizados cargados desde el JSON.
+
+```bash
+python src/control_manual.py
+
+```
+
+**Instrucciones:**
+
+1. Al iniciar, haz **clic con el mouse** dentro de la ventana de PyBullet para darle el foco.
+2. Usa las siguientes teclas:
+* `W`: Avanzar (Modo Locomoción + Impulso inicial)
+* `A` / `D`: Girar Izquierda / Derecha
+* `S`: Detenerse / Balanceo Estático
+* `Q`: Salir
+
+
+
+*Nota: Se han desactivado los atajos por defecto de PyBullet (como la tecla 'W' para wireframe) para mejorar la experiencia de control.*
+
+### 3. Control Automático (Demo)
+
+Ejecuta una secuencia de prueba autónoma con múltiples robots para validar la estabilidad y la consistencia de los parámetros aprendidos.
+
+```bash
+python src/control_automatico.py
+
+```
 
 ## 📊 Datos y Resultados Generados
 
-El script de entrenamiento (`evolucion.py`) genera automáticamente archivos CSV en la carpeta `resultados/` para su posterior análisis:
+Los scripts generan y consumen archivos en la carpeta `resultados/`:
 
 | Archivo | Descripción |
 | --- | --- |
+| `mejores_parametros.json` | **Crítico.** Contiene los valores exactos de Kp, Kd, velocidades y umbrales aprendidos. Es leído por los scripts de control. |
 | `historial_fitness.csv` | Contiene el Mejor Fitness, Promedio y Desviación Estándar por cada generación. Útil para graficar curvas de convergencia. |
-| `historial_mejor_individuo.csv` | Registro de cómo evolucionaron los genes (KPs, KDs, etc.) del mejor individuo a lo largo del tiempo. |
-| `top_10_finales.csv` | Los 10 mejores conjuntos de parámetros encontrados al finalizar (o interrumpir) la evolución. |
+| `historial_mejor_individuo.csv` | Registro histórico de cómo evolucionaron los genes generación a generación. |
+| `top_10_finales.csv` | Los 10 mejores conjuntos de parámetros encontrados en la última ejecución. |
 
 ## 📄 Referencias Teóricas
 
