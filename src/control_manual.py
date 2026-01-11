@@ -6,89 +6,72 @@ import os
 import json
 import sys
 
-# --- RUTAS ---
+# --- PATHS ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
 RESULTADOS_DIR = os.path.join(SCRIPT_DIR, "..", "resultados")
 URDF_PATH = os.path.join(ASSETS_DIR, "segwayRobot.urdf")
 JSON_PATH = os.path.join(RESULTADOS_DIR, "mejores_parametros.json")
 
-def load_parameters():
-    if not os.path.exists(JSON_PATH):
-        print(f"\n[ERROR] No se encontró: {JSON_PATH}. Ejecuta 'evolucion.py' primero.")
-        sys.exit(1)
-    try:
-        with open(JSON_PATH, "r") as f:
-            data = json.load(f)
-        return data["parameters"]
-    except Exception as e:
-        print(f"[ERROR] JSON corrupto: {e}")
-        sys.exit(1)
+if not os.path.exists(JSON_PATH):
+    print(f"\n[ERROR] File not found: {JSON_PATH}")
+    exit()
 
-# --- CARGA DE PARÁMETROS ---
-P = load_parameters()
+with open(JSON_PATH, "r") as f:
+    data = json.load(f)
+    P = data["parameters"]
 
-# 1. CONSTANTES DE TIEMPO (TIGHT LOOP - 240Hz)
+# --- CONFIGURATION ---
 PHYSICS_FREQ = 240.0
-CONTROL_FREQ = 240.0 
 PHYSICS_DT = 1.0 / PHYSICS_FREQ
-CONTROL_DT = 1.0 / CONTROL_FREQ
-STEPS_PER_CONTROL = 1 
+MAX_TORQUE = 2.5
+HEADING_HOLD_KP = 40.0 
 
-# 2. Variables Genéticas
+# Genes
 KP_BAL, KD_BAL = P["KP_BALANCE"], P["KD_BALANCE"]
 KP_FWD, KD_FWD = P["KP_FORWARD"], P["KD_FORWARD"]
 KP_TRN, KD_TRN = P["KP_TURNING"], P["KD_TURNING"]
 KP_REC, KD_REC = P["KP_RECOVERY"], P["KD_RECOVERY"]
 
-# Comportamiento
-IMPULSE_STEPS_TOTAL = int(P["IMPULSE_DURATION_SEC"] * CONTROL_FREQ)
+IMPULSE_STEPS = int(P["IMPULSE_DURATION_SEC"] * PHYSICS_FREQ)
 IMPULSE_MAG = P["IMPULSE_MAGNITUDE"]
-TURN_SPD = P["TURNING_SPEED"]
 KP_POS = P["KP_POSITION"]
 TGT_TILT = P["TARGET_TILT"]
-
-# Dinámica
+TURN_SPD = P["TURNING_SPEED"]
 REC_THRESH = P["RECOVERY_THRESHOLD"]
 LERP_ALPHA = P["LERP_ALPHA"]
 KI_BAL = P["KI_BALANCE"]
 
-# Constantes Físicas
-MAX_TORQUE = 2.5
-MAX_VEL = 25.0
-
-class SegwayController:
+class SegwayManual:
     def __init__(self):
-        # 1. Configuración Visual y Física
         self.client = p.connect(p.GUI)
         p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 0)
-        
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.setGravity(0, 0, -9.81)
         p.setTimeStep(PHYSICS_DT)
         
-        # 2. Cargar Escena
         p.loadURDF("plane.urdf")
-        start_orn = p.getQuaternionFromEuler([np.radians(2.0), 0, 0])
-        self.robotId = p.loadURDF(URDF_PATH, [0, 0, 0.23], start_orn)
+        self.robotId = p.loadURDF(URDF_PATH, [0, 0, 0.23], p.getQuaternionFromEuler([0, 0, 0]))
         
-        # 3. Fricción y Motores
         for j in [0, 1]:
-            p.changeDynamics(self.robotId, j, lateralFriction=1.0, rollingFriction=0.02)
+            p.changeDynamics(self.robotId, j, lateralFriction=0.5, rollingFriction=0.02, jointDamping=0.05)
             p.setJointMotorControl2(self.robotId, j, p.VELOCITY_CONTROL, force=0)
 
-        # 4. Variables de Estado
-        self.mode = "BALANCE" # Estado inicial
+        self.mode = "BALANCE" 
         self.running = True
         self.in_recovery = False
-        self.target_y = 0.0
-        self.impulse_counter = 0 
-        self.turning = 0.0
+        self.manual_turn_dir = 0 
         
-        # Variables de Control (Memoria)
+        # State
+        self.target_y = 0.0
+        self.hold_yaw = 0.0
+        self.impulse_counter = 0 
         self.smooth_kp = KP_BAL
         self.smooth_kd = KD_BAL
         self.integral_err = 0.0
+        
+        # Ramp logic for Manual Turn
+        self.current_turn_val = 0.0
         
         self.debug_text_id = -1
         self.global_step = 0
@@ -96,132 +79,121 @@ class SegwayController:
 
     def print_instructions(self):
         print("\n" + "="*50)
-        print(" TIGHT LOOP CONTROLLER (LATCHED MODE)")
-        print(f" Torque: {MAX_TORQUE} | Freq: {CONTROL_FREQ}Hz")
+        print(" MANUAL CONTROL (Synced with Evolution)")
         print("="*50)
-        print(" [W] FORWARD (Crucero)")
-        print(" [S] STOP (Balanceo estático)")
-        print(" [A] SPIN LEFT (Giro izquierda)")
-        print(" [D] SPIN RIGHT (Giro derecha)")
+        print(" [W] FORWARD (Impulse + Lean + Heading Hold)")
+        print(" [S] STOP (Balance)")
+        print(" [A] LEFT (Ramped Turn)")
+        print(" [D] RIGHT (Ramped Turn)")
         print(" [Q] QUIT")
         print("="*50 + "\n")
 
     def draw_debug_text(self):
         if self.global_step % 10 != 0: return
-
         pos, _ = p.getBasePositionAndOrientation(self.robotId)
-        txt_pos = [pos[0], pos[1], pos[2] + 0.4]
-        
         msg = f"MODE: {self.mode}"
-        color = [0, 0, 0]
-        
-        if self.in_recovery:
-            msg = "!!! PANIC !!!"
-            color = [1, 0, 0]
-        elif self.mode == "FORWARD" and self.impulse_counter < IMPULSE_STEPS_TOTAL:
-             msg += " (IMPULSO)"
-             color = [0, 0, 1]
-            
-        self.debug_text_id = p.addUserDebugText(msg, txt_pos, color, textSize=1.5, replaceItemUniqueId=self.debug_text_id)
+        if self.in_recovery: msg = "!!! RECOVERY !!!"
+        self.debug_text_id = p.addUserDebugText(msg, [pos[0], pos[1], pos[2] + 0.5], [0,0,0], textSize=1.2, replaceItemUniqueId=self.debug_text_id)
 
     def process_input(self):
         keys = p.getKeyboardEvents()
-        
-        # Quit
-        if ord('q') in keys and keys[ord('q')] & p.KEY_WAS_TRIGGERED:
-            self.running = False
+        if ord('q') in keys and keys[ord('q')] & p.KEY_WAS_TRIGGERED: self.running = False
 
-        # === LÓGICA DE ESTADOS PERSISTENTES (LATCH) ===
-        
-        # W -> FORWARD
         if ord('w') in keys and (keys[ord('w')] & p.KEY_WAS_TRIGGERED):
             self.mode = "FORWARD"
             self.impulse_counter = 0
-            self.turning = 0.0
-            print(">> SET MODE: FORWARD")
+            _, orn = p.getBasePositionAndOrientation(self.robotId)
+            self.hold_yaw = p.getEulerFromQuaternion(orn)[2]
 
-        # S -> BALANCE (STOP)
         if ord('s') in keys and (keys[ord('s')] & p.KEY_WAS_TRIGGERED):
             self.mode = "BALANCE"
-            self.turning = 0.0
-            # Guardar posición actual para quedarse quieto aquí
-            pos, _ = p.getBasePositionAndOrientation(self.robotId)
-            self.target_y = pos[1]
-            print(">> SET MODE: BALANCE")
+            self.target_y = p.getBasePositionAndOrientation(self.robotId)[0][1]
+            self.manual_turn_dir = 0
 
-        # A -> LEFT SPIN
-        if ord('a') in keys and (keys[ord('a')] & p.KEY_WAS_TRIGGERED):
-            self.mode = "LEFT"
-            self.turning = TURN_SPD
-            # Guardar posición para girar en el sitio
-            pos, _ = p.getBasePositionAndOrientation(self.robotId)
-            self.target_y = pos[1]
-            print(">> SET MODE: LEFT")
-
-        # D -> RIGHT SPIN
-        if ord('d') in keys and (keys[ord('d')] & p.KEY_WAS_TRIGGERED):
-            self.mode = "RIGHT"
-            self.turning = -TURN_SPD
-            # Guardar posición para girar en el sitio
-            pos, _ = p.getBasePositionAndOrientation(self.robotId)
-            self.target_y = pos[1]
-            print(">> SET MODE: RIGHT")
+        self.manual_turn_dir = 0
+        if ord('a') in keys and (keys[ord('a')] & p.KEY_IS_DOWN):
+            self.manual_turn_dir = 1
+            self.mode = "TURN"
+        elif ord('d') in keys and (keys[ord('d')] & p.KEY_IS_DOWN):
+            self.manual_turn_dir = -1
+            self.mode = "TURN"
+        elif self.mode == "TURN": 
+            self.mode = "BALANCE"
+            self.target_y = p.getBasePositionAndOrientation(self.robotId)[0][1]
 
     def update_control_logic(self):
-        # 1. Sensors
         pos, orn = p.getBasePositionAndOrientation(self.robotId)
         euler = p.getEulerFromQuaternion(orn)
         tilt = euler[1]
-        lin_vel, ang_vel = p.getBaseVelocity(self.robotId)
-        tilt_vel = ang_vel[0] 
+        yaw = euler[2]
+        _, ang_vel = p.getBaseVelocity(self.robotId)
         
-        # 2. Panic Logic
-        if not self.in_recovery and abs(tilt) > REC_THRESH:
-            self.in_recovery = True
+        if not self.in_recovery and abs(tilt) > REC_THRESH: self.in_recovery = True
         elif self.in_recovery and abs(tilt) < (REC_THRESH * 0.5): 
             self.in_recovery = False
             self.target_y = pos[1] 
+            self.hold_yaw = yaw
 
-        # 3. Gain Selection
         kp, kd = KP_BAL, KD_BAL
         des_tilt = 0.0
+        target_turn = 0.0
         
         if self.in_recovery:
             kp, kd = KP_REC, KD_REC
         elif self.mode == "FORWARD":
             kp, kd = KP_FWD, KD_FWD
             des_tilt = TGT_TILT
-        else: 
-            # BALANCE, LEFT, y RIGHT usan la lógica de mantener posición
+            yaw_err = self.hold_yaw - yaw
+            while yaw_err > np.pi: yaw_err -= 2*np.pi
+            while yaw_err < -np.pi: yaw_err += 2*np.pi
+            target_turn = np.clip(HEADING_HOLD_KP * yaw_err, -2.0, 2.0)
+            
+        elif self.mode == "TURN":
+            kp, kd = KP_TRN, KD_TRN
+            target_turn = TURN_SPD * self.manual_turn_dir
+            
+        else: # BALANCE
             kp, kd = KP_BAL, KD_BAL
             err_y = self.target_y - pos[1]
             des_tilt = np.clip(KP_POS * err_y, -0.15, 0.15)
 
-        # 4. LERP Smoothing
+        # --- SLEW RATE LIMITER (RAMP) ---
+        # Slowly move current_turn_val towards target_turn
+        # Rise time approx 1.0s (same as evolution)
+        step_size = TURN_SPD * (PHYSICS_DT / 1.0) 
+        if self.current_turn_val < target_turn:
+            self.current_turn_val = min(target_turn, self.current_turn_val + step_size)
+        elif self.current_turn_val > target_turn:
+            self.current_turn_val = max(target_turn, self.current_turn_val - step_size)
+
         self.smooth_kp += (kp - self.smooth_kp) * LERP_ALPHA
         self.smooth_kd += (kd - self.smooth_kd) * LERP_ALPHA
 
-        # 5. PID
         tilt_err = tilt - des_tilt
-        
-        if not self.in_recovery and self.mode in ["BALANCE", "LEFT", "RIGHT"] and abs(tilt) < 0.1:
-            self.integral_err += tilt_err
-            self.integral_err = np.clip(self.integral_err, -5.0, 5.0)
+        if not self.in_recovery and abs(tilt) < 0.1:
+            self.integral_err = np.clip(self.integral_err + tilt_err, -5.0, 5.0)
         else:
             self.integral_err = 0.0
 
-        out = (self.smooth_kp * tilt_err) + (self.smooth_kd * tilt_vel) + (KI_BAL * self.integral_err)
+        out = (self.smooth_kp * tilt_err) + (self.smooth_kd * ang_vel[0]) + (KI_BAL * self.integral_err)
 
-        # 6. Actuators
         v_l, v_r = 0, 0
-        
-        if self.mode == "FORWARD" and self.impulse_counter < IMPULSE_STEPS_TOTAL:
+        if self.mode == "FORWARD" and self.impulse_counter < IMPULSE_STEPS:
             v_l = v_r = IMPULSE_MAG
             self.impulse_counter += 1
         else:
-            # En modos giro, self.turning tendrá valor. En otros será 0.
-            v_l = np.clip(out + self.turning, -MAX_VEL, MAX_VEL)
-            v_r = np.clip(out - self.turning, -MAX_VEL, MAX_VEL)
+            # Balance Priority Logic
+            turn_now = self.current_turn_val
+            raw_l, raw_r = out + turn_now, out - turn_now
+            max_req = max(abs(raw_l), abs(raw_r))
+            limit = 25.0
+            if max_req > limit:
+                if abs(out) > limit:
+                    out = np.clip(out, -limit, limit)
+                    turn_now = 0.0
+                else:
+                    turn_now = np.clip(turn_now, -(limit-abs(out)), limit-abs(out))
+            v_l, v_r = np.clip(out + turn_now, -limit, limit), np.clip(out - turn_now, -limit, limit)
 
         p.setJointMotorControl2(self.robotId, 0, p.VELOCITY_CONTROL, targetVelocity=v_l, force=MAX_TORQUE)
         p.setJointMotorControl2(self.robotId, 1, p.VELOCITY_CONTROL, targetVelocity=v_r, force=MAX_TORQUE)
@@ -229,22 +201,13 @@ class SegwayController:
         self.draw_debug_text()
 
     def loop(self):
-        print("Simulation Started. Press W/A/S/D to switch modes.")
         while self.running:
-            # 1. Process Input
             self.process_input()
-            
-            # 2. Control Logic
             self.update_control_logic()
-            
-            # 3. Physics Step
             p.stepSimulation()
             self.global_step += 1
-            
-            time.sleep(PHYSICS_DT / 10)
-        
+            time.sleep(PHYSICS_DT)
         p.disconnect()
-        print("Simulation Ended.")
 
 if __name__ == "__main__":
-    SegwayController().loop()
+    SegwayManual().loop()
